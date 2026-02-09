@@ -234,6 +234,33 @@ if "last_weather" not in st.session_state:
 if "last_dog" not in st.session_state:
     st.session_state.last_dog = None
 
+if "day_plans" not in st.session_state:
+    st.session_state.day_plans = {}
+
+
+def _normalize_date_key(target_date: date) -> str:
+    return target_date.isoformat()
+
+
+def add_day_plan(target_date: date, hour: int, title: str, note: str):
+    date_key = _normalize_date_key(target_date)
+    st.session_state.day_plans.setdefault(date_key, [])
+    st.session_state.day_plans[date_key].append(
+        {"hour": hour, "title": title.strip(), "note": note.strip()}
+    )
+    st.session_state.day_plans[date_key] = sorted(
+        st.session_state.day_plans[date_key], key=lambda item: item["hour"]
+    )
+
+
+def delete_day_plans(target_date: date, hours: list[int]):
+    date_key = _normalize_date_key(target_date)
+    if date_key not in st.session_state.day_plans:
+        return
+    st.session_state.day_plans[date_key] = [
+        item for item in st.session_state.day_plans[date_key] if item["hour"] not in hours
+    ]
+
 
 def upsert_today_record(ach_rate: int, checked: int, mood: int):
     today_str = date.today().isoformat()
