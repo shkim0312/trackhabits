@@ -322,6 +322,124 @@ chart = (
 st.altair_chart(chart, use_container_width=True)
 
 # ----------------------------
+# Calendar view
+# ----------------------------
+st.subheader("🗓️ 달력 보기")
+
+if "selected_date" not in st.session_state:
+    st.session_state.selected_date = date.today()
+
+view_mode = st.radio("보기 모드", ["주간", "월간"], horizontal=True)
+
+records_by_date = {
+    row["date"].date(): {
+        "ach_rate": int(row["ach_rate"]),
+        "checked": int(row["checked"]),
+        "mood": int(row["mood"]),
+    }
+    for _, row in df.iterrows()
+}
+
+min_record_date = df["date"].min().date() if not df.empty else date.today()
+max_record_date = df["date"].max().date() if not df.empty else date.today()
+
+def _month_start(d: date) -> date:
+    return date(d.year, d.month, 1)
+
+def _next_month(d: date) -> date:
+    if d.month == 12:
+        return date(d.year + 1, 1, 1)
+    return date(d.year, d.month + 1, 1)
+
+
+def _month_range(start: date, end: date) -> list[date]:
+    months = []
+    cursor = _month_start(start)
+    last = _month_start(end)
+    while cursor <= last:
+        months.append(cursor)
+        cursor = _next_month(cursor)
+    return months
+
+
+if view_mode == "월간":
+    month_options = _month_range(min_record_date, max_record_date)
+    default_month = _month_start(date.today())
+    if default_month not in month_options:
+        month_options.append(default_month)
+        month_options = sorted(month_options)
+
+    month_labels = [m.strftime("%Y-%m") for m in month_options]
+    default_index = month_options.index(default_month)
+    selected_label = st.selectbox("월 선택", month_labels, index=default_index)
+    selected_month = month_options[month_labels.index(selected_label)]
+
+    first_day = selected_month
+    next_month = _next_month(first_day)
+    last_day = next_month - timedelta(days=1)
+    start_weekday = first_day.weekday()  # Monday=0
+    total_days = last_day.day
+
+    day_headers = ["월", "화", "수", "목", "금", "토", "일"]
+    header_cols = st.columns(7)
+    for idx, day_name in enumerate(day_headers):
+        header_cols[idx].markdown(f"**{day_name}**")
+
+    cells = []
+    cells.extend([None] * start_weekday)
+    cells.extend([date(first_day.year, first_day.month, d) for d in range(1, total_days + 1)])
+    while len(cells) % 7 != 0:
+        cells.append(None)
+
+    for week_start in range(0, len(cells), 7):
+        cols = st.columns(7)
+        for idx, day in enumerate(cells[week_start : week_start + 7]):
+            with cols[idx]:
+                if day is None:
+                    st.write("")
+                    continue
+                record = records_by_date.get(day)
+                is_today = day == date.today()
+                label = f"{day.day}"
+                if is_today:
+                    label = f"⭐ {label}"
+                if record:
+                    label = f"{label}\n{record['ach_rate']}% / 🙂{record['mood']}"
+                if st.button(label, key=f"day-{day.isoformat()}"):
+                    st.session_state.selected_date = day
+else:
+    week_start = st.session_state.selected_date - timedelta(days=st.session_state.selected_date.weekday())
+    week_days = [week_start + timedelta(days=i) for i in range(7)]
+    day_headers = ["월", "화", "수", "목", "금", "토", "일"]
+    header_cols = st.columns(7)
+    for idx, day_name in enumerate(day_headers):
+        header_cols[idx].markdown(f"**{day_name}**")
+
+    cols = st.columns(7)
+    for idx, day in enumerate(week_days):
+        with cols[idx]:
+            record = records_by_date.get(day)
+            is_today = day == date.today()
+            label = day.strftime("%m/%d")
+            if is_today:
+                label = f"⭐ {label}"
+            if record:
+                label = f"{label}\n{record['ach_rate']}% / 🙂{record['mood']}"
+            if st.button(label, key=f"week-{day.isoformat()}"):
+                st.session_state.selected_date = day
+
+selected_day = st.session_state.selected_date
+selected_record = records_by_date.get(selected_day)
+st.markdown("#### 📌 선택한 날짜 상세")
+if selected_record:
+    st.write(f"**날짜:** {selected_day.isoformat()}")
+    st.write(f"**달성률:** {selected_record['ach_rate']}%")
+    st.write(f"**체크 수:** {selected_record['checked']}개")
+    st.write(f"**기분:** {selected_record['mood']}/10")
+else:
+    st.info("선택한 날짜의 체크인 기록이 아직 없어요.")
+
+# ----------------------------
 # Generate report
 # ----------------------------
 st.subheader("🧠 AI 코치 리포트")
