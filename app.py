@@ -238,6 +238,15 @@ if "last_dog" not in st.session_state:
 if "day_plans" not in st.session_state:
     st.session_state.day_plans = {}
 
+if "calendar_month" not in st.session_state:
+    st.session_state.calendar_month = date.today().replace(day=1)
+
+if "selected_date" not in st.session_state:
+    st.session_state.selected_date = date.today()
+
+if "last_plan_feedback" not in st.session_state:
+    st.session_state.last_plan_feedback = None
+
 
 def _normalize_date_key(target_date: date) -> str:
     return target_date.isoformat()
@@ -261,6 +270,13 @@ def delete_day_plans(target_date: date, hours: list[int]):
     st.session_state.day_plans[date_key] = [
         item for item in st.session_state.day_plans[date_key] if item["hour"] not in hours
     ]
+
+
+def shift_month(base_date: date, delta: int) -> date:
+    month = base_date.month - 1 + delta
+    year = base_date.year + month // 12
+    month = month % 12 + 1
+    return date(year, month, 1)
 
 
 def upsert_today_record(ach_rate: int, checked: int, mood: int):
@@ -350,122 +366,113 @@ chart = (
 st.altair_chart(chart, use_container_width=True)
 
 # ----------------------------
-# Calendar view
+# 24h Calendar Scheduler
 # ----------------------------
-st.subheader("🗓️ 달력 보기")
+st.subheader("🗓️ 24시간 일정 캘린더")
 
-if "selected_date" not in st.session_state:
-    st.session_state.selected_date = date.today()
+cal_controls = st.columns([0.2, 0.6, 0.2])
+with cal_controls[0]:
+    if st.button("◀️ 이전 달", use_container_width=True):
+        st.session_state.calendar_month = shift_month(st.session_state.calendar_month, -1)
+with cal_controls[1]:
+    st.markdown(
+        f"<div style='text-align:center; font-weight:600; font-size:18px;'>"
+        f"{st.session_state.calendar_month.strftime('%Y년 %m월')}</div>",
+        unsafe_allow_html=True,
+    )
+with cal_controls[2]:
+    if st.button("다음 달 ▶️", use_container_width=True):
+        st.session_state.calendar_month = shift_month(st.session_state.calendar_month, 1)
 
-view_mode = st.radio("보기 모드", ["주간", "월간"], horizontal=True)
+weekdays = ["월", "화", "수", "목", "금", "토", "일"]
+weekday_cols = st.columns(7)
+for idx, day_name in enumerate(weekdays):
+    weekday_cols[idx].markdown(f"**{day_name}**")
 
-records_by_date = {
-    row["date"].date(): {
-        "ach_rate": int(row["ach_rate"]),
-        "checked": int(row["checked"]),
-        "mood": int(row["mood"]),
-    }
-    for _, row in df.iterrows()
-}
+year = st.session_state.calendar_month.year
+month = st.session_state.calendar_month.month
+weeks = calendar.monthcalendar(year, month)
+for week in weeks:
+    day_cols = st.columns(7)
+    for idx, day_num in enumerate(week):
+        if day_num == 0:
+            day_cols[idx].markdown("&nbsp;", unsafe_allow_html=True)
+            continue
+        current_date = date(year, month, day_num)
+        is_selected = current_date == st.session_state.selected_date
+        button_label = f"{day_num}{'  +' if is_selected else ''}"
+        if day_cols[idx].button(
+            button_label,
+            key=f"cal-{year}-{month}-{day_num}",
+            use_container_width=True,
+        ):
+            st.session_state.selected_date = current_date
+            st.session_state.plan_date_input = current_date
 
-min_record_date = df["date"].min().date() if not df.empty else date.today()
-max_record_date = df["date"].max().date() if not df.empty else date.today()
+st.caption(f"선택한 날짜: {st.session_state.selected_date.isoformat()}")
 
-def _month_start(d: date) -> date:
-    return date(d.year, d.month, 1)
+planner_left, planner_right = st.columns([1.1, 1.4])
 
-def _next_month(d: date) -> date:
-    if d.month == 12:
-        return date(d.year + 1, 1, 1)
-    return date(d.year, d.month + 1, 1)
+with planner_left:
+    plan_date = st.date_input(
+        "일정 날짜",
+        value=st.session_state.selected_date,
+        key="plan_date_input",
+    )
+    if plan_date != st.session_state.selected_date:
+        st.session_state.selected_date = plan_date
+        st.session_state.calendar_month = plan_date.replace(day=1)
 
+    with st.form("add_plan_form", clear_on_submit=True):
+        plan_hour = st.selectbox(
+            "시간 (24h)", list(range(0, 24)), format_func=lambda h: f"{h:02d}:00"
+        )
+        plan_title = st.text_input("일정 제목", placeholder="예: 아침 스트레칭")
+        plan_note = st.text_area("메모", placeholder="짧은 메모를 남겨보세요.", height=80)
+        submitted = st.form_submit_button("일정 추가", use_container_width=True)
+        if submitted:
+            if not plan_title.strip():
+                st.session_state.last_plan_feedback = ("warning", "일정 제목을 입력해 주세요.")
+            else:
+                add_day_plan(st.session_state.selected_date, plan_hour, plan_title, plan_note)
+                st.session_state.last_plan_feedback = ("success", "일정을 추가했어요!")
+                st.rerun()
 
-def _month_range(start: date, end: date) -> list[date]:
-    months = []
-    cursor = _month_start(start)
-    last = _month_start(end)
-    while cursor <= last:
-        months.append(cursor)
-        cursor = _next_month(cursor)
-    return months
+    if st.session_state.last_plan_feedback:
+        level, message = st.session_state.last_plan_feedback
+        if level == "success":
+            st.success(message)
+        elif level == "warning":
+            st.warning(message)
 
+    date_key = _normalize_date_key(plan_date)
+    existing_hours = [
+        f"{item['hour']:02d}:00 · {item['title']}"
+        for item in st.session_state.day_plans.get(date_key, [])
+    ]
+    if existing_hours:
+        selected = st.multiselect("삭제할 일정 선택", existing_hours)
+        if st.button("선택 일정 삭제", use_container_width=True):
+            selected_hours = [int(value.split(":")[0]) for value in selected]
+            delete_day_plans(plan_date, selected_hours)
+            st.info("선택 일정을 삭제했어요.")
 
-if view_mode == "월간":
-    month_options = _month_range(min_record_date, max_record_date)
-    default_month = _month_start(date.today())
-    if default_month not in month_options:
-        month_options.append(default_month)
-        month_options = sorted(month_options)
+with planner_right:
+    plan_date_key = _normalize_date_key(plan_date)
+    hour_rows = []
+    plans = {item["hour"]: item for item in st.session_state.day_plans.get(plan_date_key, [])}
+    for hour in range(24):
+        plan = plans.get(hour)
+        hour_rows.append(
+            {
+                "시간": f"{hour:02d}:00",
+                "일정": plan["title"] if plan else "",
+                "메모": plan["note"] if plan else "",
+            }
+        )
 
-    month_labels = [m.strftime("%Y-%m") for m in month_options]
-    default_index = month_options.index(default_month)
-    selected_label = st.selectbox("월 선택", month_labels, index=default_index)
-    selected_month = month_options[month_labels.index(selected_label)]
-
-    first_day = selected_month
-    next_month = _next_month(first_day)
-    last_day = next_month - timedelta(days=1)
-    start_weekday = first_day.weekday()  # Monday=0
-    total_days = last_day.day
-
-    day_headers = ["월", "화", "수", "목", "금", "토", "일"]
-    header_cols = st.columns(7)
-    for idx, day_name in enumerate(day_headers):
-        header_cols[idx].markdown(f"**{day_name}**")
-
-    cells = []
-    cells.extend([None] * start_weekday)
-    cells.extend([date(first_day.year, first_day.month, d) for d in range(1, total_days + 1)])
-    while len(cells) % 7 != 0:
-        cells.append(None)
-
-    for week_start in range(0, len(cells), 7):
-        cols = st.columns(7)
-        for idx, day in enumerate(cells[week_start : week_start + 7]):
-            with cols[idx]:
-                if day is None:
-                    st.write("")
-                    continue
-                record = records_by_date.get(day)
-                is_today = day == date.today()
-                label = f"{day.day}"
-                if is_today:
-                    label = f"⭐ {label}"
-                if record:
-                    label = f"{label}\n{record['ach_rate']}% / 🙂{record['mood']}"
-                if st.button(label, key=f"day-{day.isoformat()}"):
-                    st.session_state.selected_date = day
-else:
-    week_start = st.session_state.selected_date - timedelta(days=st.session_state.selected_date.weekday())
-    week_days = [week_start + timedelta(days=i) for i in range(7)]
-    day_headers = ["월", "화", "수", "목", "금", "토", "일"]
-    header_cols = st.columns(7)
-    for idx, day_name in enumerate(day_headers):
-        header_cols[idx].markdown(f"**{day_name}**")
-
-    cols = st.columns(7)
-    for idx, day in enumerate(week_days):
-        with cols[idx]:
-            record = records_by_date.get(day)
-            is_today = day == date.today()
-            label = day.strftime("%m/%d")
-            if is_today:
-                label = f"⭐ {label}"
-            if record:
-                label = f"{label}\n{record['ach_rate']}% / 🙂{record['mood']}"
-            if st.button(label, key=f"week-{day.isoformat()}"):
-                st.session_state.selected_date = day
-
-selected_day = st.session_state.selected_date
-selected_record = records_by_date.get(selected_day)
-st.markdown("#### 📌 선택한 날짜 상세")
-if selected_record:
-    st.write(f"**날짜:** {selected_day.isoformat()}")
-    st.write(f"**달성률:** {selected_record['ach_rate']}%")
-    st.write(f"**체크 수:** {selected_record['checked']}개")
-    st.write(f"**기분:** {selected_record['mood']}/10")
-else:
-    st.info("선택한 날짜의 체크인 기록이 아직 없어요.")
+    schedule_df = pd.DataFrame(hour_rows)
+    st.dataframe(schedule_df, use_container_width=True, height=500)
 
 # ----------------------------
 # Generate report
