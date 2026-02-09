@@ -234,6 +234,33 @@ if "last_weather" not in st.session_state:
 if "last_dog" not in st.session_state:
     st.session_state.last_dog = None
 
+if "day_plans" not in st.session_state:
+    st.session_state.day_plans = {}
+
+
+def _normalize_date_key(target_date: date) -> str:
+    return target_date.isoformat()
+
+
+def add_day_plan(target_date: date, hour: int, title: str, note: str):
+    date_key = _normalize_date_key(target_date)
+    st.session_state.day_plans.setdefault(date_key, [])
+    st.session_state.day_plans[date_key].append(
+        {"hour": hour, "title": title.strip(), "note": note.strip()}
+    )
+    st.session_state.day_plans[date_key] = sorted(
+        st.session_state.day_plans[date_key], key=lambda item: item["hour"]
+    )
+
+
+def delete_day_plans(target_date: date, hours: list[int]):
+    date_key = _normalize_date_key(target_date)
+    if date_key not in st.session_state.day_plans:
+        return
+    st.session_state.day_plans[date_key] = [
+        item for item in st.session_state.day_plans[date_key] if item["hour"] not in hours
+    ]
+
 
 def upsert_today_record(ach_rate: int, checked: int, mood: int):
     today_str = date.today().isoformat()
@@ -320,6 +347,55 @@ chart = (
     .properties(height=260)
 )
 st.altair_chart(chart, use_container_width=True)
+
+# ----------------------------
+# 24h Calendar Scheduler
+# ----------------------------
+st.subheader("🗓️ 24시간 일정 캘린더")
+
+planner_left, planner_right = st.columns([1.1, 1.4])
+
+with planner_left:
+    plan_date = st.date_input("일정 날짜", value=date.today())
+    plan_hour = st.selectbox("시간 (24h)", list(range(0, 24)), format_func=lambda h: f"{h:02d}:00")
+    plan_title = st.text_input("일정 제목", placeholder="예: 아침 스트레칭")
+    plan_note = st.text_area("메모", placeholder="짧은 메모를 남겨보세요.", height=80)
+
+    if st.button("일정 추가", use_container_width=True):
+        if not plan_title.strip():
+            st.warning("일정 제목을 입력해 주세요.")
+        else:
+            add_day_plan(plan_date, plan_hour, plan_title, plan_note)
+            st.success("일정을 추가했어요!")
+
+    date_key = _normalize_date_key(plan_date)
+    existing_hours = [
+        f"{item['hour']:02d}:00 · {item['title']}"
+        for item in st.session_state.day_plans.get(date_key, [])
+    ]
+    if existing_hours:
+        selected = st.multiselect("삭제할 일정 선택", existing_hours)
+        if st.button("선택 일정 삭제", use_container_width=True):
+            selected_hours = [int(value.split(":")[0]) for value in selected]
+            delete_day_plans(plan_date, selected_hours)
+            st.info("선택 일정을 삭제했어요.")
+
+with planner_right:
+    plan_date_key = _normalize_date_key(plan_date)
+    hour_rows = []
+    plans = {item["hour"]: item for item in st.session_state.day_plans.get(plan_date_key, [])}
+    for hour in range(24):
+        plan = plans.get(hour)
+        hour_rows.append(
+            {
+                "시간": f"{hour:02d}:00",
+                "일정": plan["title"] if plan else "",
+                "메모": plan["note"] if plan else "",
+            }
+        )
+
+    schedule_df = pd.DataFrame(hour_rows)
+    st.dataframe(schedule_df, use_container_width=True, height=500)
 
 # ----------------------------
 # Generate report
